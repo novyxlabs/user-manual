@@ -1,0 +1,1 @@
+# user-manual\n\nPersistent profile management for OpenClaw using Novyx memory.\n\n## Features\n- Persistent USER.md profile\n- Auto-injection on startup\n- Natural language updates\n- Cloud backup via Novyx
