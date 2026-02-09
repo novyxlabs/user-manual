@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-user-manual: manage persistent user profile (USER.md) with Novyx memory integration.
+user-manual: Manage persistent user profile (USER.md) with Novyx memory integration.
+v2 SDK compatible with proper exception handling.
 """
 import sys
 import os
 import argparse
 import datetime
-import json
 from pathlib import Path
 
-# Try to import novyx; handle gracefully if missing (Free Tier fallback)
+# Novyx v2 SDK with proper exceptions
 try:
-    from novyx import Novyx
+    from novyx import Novyx, NovyxUpgradeRequired, NovyxAuthError
     NOVYX_AVAILABLE = True
 except ImportError:
     NOVYX_AVAILABLE = False
@@ -20,6 +20,7 @@ USER_MD_PATH = Path("USER.md")
 NOVYX_KEY_PATH = Path.home() / ".novyx_key"
 
 def get_novyx_client():
+    """Initialize Novyx client with error handling."""
     if not NOVYX_AVAILABLE:
         return None
     
@@ -41,13 +42,13 @@ def init_profile():
         print(f"Created new profile at {USER_MD_PATH}")
 
 def read_profile():
-    """Read and return the full profile content."""
+    """Read the full profile content."""
     init_profile()
     with open(USER_MD_PATH, "r") as f:
         return f.read()
 
 def update_profile(content, section=None):
-    """Append content or update a section in USER.md."""
+    """Append content and sync to Novyx."""
     init_profile()
     
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -62,15 +63,22 @@ def update_profile(content, section=None):
     client = get_novyx_client()
     if client:
         try:
-            memory_id = client.remember(f"User Profile Update: {content}")
-            print(f"Synced to Novyx Memory (ID: {memory_id})")
+            result = client.remember(f"User Profile Update: {content}")
+            memory_id = result.get('uuid', 'unknown')
+            print(f"Synced to Novyx (ID: {memory_id})")
+        except NovyxUpgradeRequired as e:
+            print(f"⚠️ Upgrade required: {e}")
+            print("   Novyx features disabled. Continue locally.")
+        except NovyxAuthError as e:
+            print(f"⚠️ Auth error: {e}")
+            print("   Check your API key.")
         except Exception as e:
-            print(f"Warning: Failed to sync to Novyx: {e}")
+            print(f"Warning: Novyx sync failed: {e}")
     else:
-        print("Warning: Novyx client not available. Profile update stored locally only.")
+        print("Note: Novyx not configured. Profile stored locally only.")
 
 def find_in_profile(query):
-    """Search USER.md and Novyx for a specific term."""
+    """Search USER.md and Novyx."""
     init_profile()
     
     print(f"Searching local profile for '{query}'...")
@@ -85,18 +93,20 @@ def find_in_profile(query):
     else:
         print("No local matches found.")
 
-    # Search Novyx history
+    # Search Novyx
     client = get_novyx_client()
     if client:
-        print(f"\nSearching Novyx Memory history for '{query}'...")
+        print(f"\nSearching Novyx for '{query}'...")
         try:
             results = client.recall(query)
             if results:
                 print("\nNovyx Matches:")
                 for res in results:
-                    print(f"- {res.get('observation')} (Score: {res.get('score'):.2f})")
+                    print(f"- {res.get('observation', '')[:80]} (Score: {res.get('score', 0):.2f})")
             else:
-                print("No remote matches found.")
+                print("No remote matches.")
+        except NovyxUpgradeRequired as e:
+            print(f"⚠️ Upgrade required for recall: {e}")
         except Exception as e:
             print(f"Error querying Novyx: {e}")
 
@@ -126,36 +136,35 @@ def show_stats():
     client = get_novyx_client()
     if client:
         try:
-            # Mock stats call since Novyx PyPI lib might not expose usage directly yet
-            # In a real implementation, client.get_usage() would return this.
-            # For now, we estimate based on local tracking or API response headers if available.
-            # Assuming a hypothetical `client.stats()` method or just reporting "Connected".
-            print("\n☁️ Novyx Cloud Memory")
-            print(f"Status: Connected (Admin Key)")
-            # print(f"Memories: {client.count()} / Unlimited (Admin)") # If count supported
-            print("Access: Unlimited (Admin Tier)") 
+            usage = client.usage()
+            if usage:
+                tier = usage.get('tier', 'Unknown')
+                used = usage.get('usage', {}).get('memories_stored', 'N/A')
+                limit = usage.get('usage', {}).get('memory_limit', 'N/A')
+                print(f"\n☁️ Novyx Cloud")
+                print(f"Tier: {tier}")
+                print(f"Memories: {used} / {limit}")
+            else:
+                print(f"\n☁️ Novyx: Connected (stats unavailable)")
+        except NovyxUpgradeRequired as e:
+            print(f"\n☁️ Novyx: Upgrade required for stats")
         except Exception as e:
-             print(f"\n☁️ Novyx Cloud Memory: Error ({e})")
+            print(f"\n☁️ Novyx: Error ({e})")
     else:
-        print("\n☁️ Novyx Cloud Memory: Not Configured (Free Tier Limits Apply locally)")
-
+        print("\n☁️ Novyx: Not configured")
 
 def main():
     parser = argparse.ArgumentParser(description="Manage persistent user profile.")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
-    # read
     subparsers.add_parser("read", help="Read the full profile")
-
-    # update
+    
     update_parser = subparsers.add_parser("update", help="Update the profile")
     update_parser.add_argument("content", help="Content to add")
     
-    # find
     find_parser = subparsers.add_parser("find", help="Find in profile")
     find_parser.add_argument("query", help="Search query")
 
-    # stats
     subparsers.add_parser("stats", help="Show profile stats")
 
     args = parser.parse_args()
